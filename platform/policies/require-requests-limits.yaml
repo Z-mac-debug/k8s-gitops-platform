@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-requests-limits
   annotations:
@@ -10,33 +10,23 @@ metadata:
       Every container must declare CPU and memory requests and a memory limit, so one workload can't
       starve the node.
 spec:
-  background: true
-  rules:
-    - name: validate-resources
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "CPU and memory requests and a memory limit are required for every container."
-        pattern:
-          spec:
-            containers:
-              - resources:
-                  requests:
-                    cpu: "?*"
-                    memory: "?*"
-                  limits:
-                    memory: "?*"
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, has(c.resources) &&
+          has(c.resources.requests) && 'cpu' in c.resources.requests && 'memory' in c.resources.requests &&
+          has(c.resources.limits) && 'memory' in c.resources.limits)
+      message: "[require-requests-limits] CPU and memory requests and a memory limit are required for every container."

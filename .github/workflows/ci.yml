@@ -75,9 +75,10 @@ jobs:
           status=0
           for dir in apps/podinfo/overlays/dev apps/podinfo/overlays/prod platform/policies projects clusters/dev clusters/prod bootstrap; do
             echo "::group::$dir"
-            # Skipped kinds: Kyverno policies are validated by the Kyverno CLI job (newer than the public schema
+            # Skipped kinds: Kyverno CEL policies are validated by the Kyverno CLI job (newer than the public schema
             # catalog); CustomResourceDefinitions come from upstream releases and kubeconform has no strict schema for them.
-            kubectl kustomize "$dir" | kubeconform -strict -summary -skip ClusterPolicy,CustomResourceDefinition \
+            kubectl kustomize "$dir" | kubeconform -strict -summary \
+              -skip ValidatingPolicy,ImageValidatingPolicy,CustomResourceDefinition \
               -schema-location default \
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
               || status=1
@@ -184,8 +185,23 @@ jobs:
             if [ "$attempt" -eq 12 ]; then echo "::error::Kyverno webhook never became reachable"; exit 1; fi
             echo "Webhook not ready yet (attempt $attempt/12), retrying in 10s..."; sleep 10
           done
-          kubectl wait --for=condition=Ready clusterpolicy --all --timeout=180s
-          kubectl get clusterpolicy
+          kubectl wait --for=jsonpath='{.status.conditionStatus.ready}'=true validatingpolicy --all --timeout=180s
+          kubectl get validatingpolicies,imagevalidatingpolicies
+
+      - name: Wait until the policies are enforcing at admission
+        run: |
+          # A policy can report Ready a moment before Kyverno has registered its webhook rules,
+          # so probe with a server-side dry run until the bad pod is actually denied.
+          kubectl create namespace policy-test
+          for attempt in $(seq 1 18); do
+            if ! sed 's/namespace: podinfo-dev/namespace: policy-test/' tests/e2e/noncompliant-pod.yaml \
+                 | kubectl apply --dry-run=server -f - 2>/tmp/probe.txt \
+               && grep -q "pod-security-restricted" /tmp/probe.txt; then
+              echo "Policies are enforcing (attempt $attempt)"; exit 0
+            fi
+            echo "Not enforcing yet (attempt $attempt/18), retrying in 10s..."; sleep 10
+          done
+          cat /tmp/probe.txt; echo "::error::Policies never started enforcing"; exit 1
 
       - name: Deploy podinfo (dev overlay) - must be ADMITTED
         run: |
@@ -210,7 +226,6 @@ jobs:
 
       - name: Non-compliant pod - must be REJECTED by Kyverno (namespace without PSA labels)
         run: |
-          kubectl create namespace policy-test
           if sed 's/namespace: podinfo-dev/namespace: policy-test/' tests/e2e/noncompliant-pod.yaml \
                | kubectl apply -f - 2>/tmp/err.txt; then
             echo "::error::Privileged pod from an unapproved registry was admitted"; exit 1
@@ -233,4 +248,5 @@ jobs:
           kubectl get pods -A
           kubectl -n podinfo-dev describe pods || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -50
+          kubectl get validatingpolicies,imagevalidatingpolicies -o wide || true
           kubectl get policyreport -A || true

@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-labels
   annotations:
@@ -10,28 +10,22 @@ metadata:
       Pods must carry app.kubernetes.io/name, which ownership, cost allocation and network policies
       rely on.
 spec:
-  background: true
-  rules:
-    - name: require-app-name
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "The label app.kubernetes.io/name is required."
-        pattern:
-          metadata:
-            labels:
-              app.kubernetes.io/name: "?*"
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  validations:
+    - expression: >-
+        has(object.metadata.labels) && 'app.kubernetes.io/name' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/name'] != ''
+      message: "[require-labels] The label app.kubernetes.io/name is required."

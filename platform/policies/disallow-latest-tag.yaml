@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: disallow-latest-tag
   annotations:
@@ -7,54 +7,33 @@ metadata:
     policies.kyverno.io/category: Supply Chain
     policies.kyverno.io/severity: medium
     policies.kyverno.io/description: >-
-      Images must use an explicit, immutable version tag (or digest) so every deployment is
+      Images must use an explicit, immutable version tag or a digest, so every deployment is
       reproducible and traceable.
 spec:
-  background: true
-  rules:
-    - name: require-image-tag
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "An explicit image tag or digest is required."
-        pattern:
-          spec:
-            containers:
-              - image: "*:* | *@sha256:*"
-    - name: disallow-latest
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "The ':latest' tag is mutable and not allowed."
-        pattern:
-          spec:
-            containers:
-              - image: "!*:latest"
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c,
+          c.image.matches('@sha256:[a-f0-9]{64}$') || c.image.matches(':[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'))
+      message: "[disallow-latest-tag] An explicit image tag or digest is required."
+    - expression: >-
+        variables.allContainers.all(c, !c.image.endsWith(':latest'))
+      message: "[disallow-latest-tag] The ':latest' tag is mutable and not allowed."

@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-readonly-rootfs
   annotations:
@@ -10,29 +10,22 @@ metadata:
       Containers must run with a read-only root filesystem, so an attacker can't drop tools or
       modify binaries. Writable paths use emptyDir volumes.
 spec:
-  background: true
-  rules:
-    - name: validate-readonly-rootfs
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "Containers must set securityContext.readOnlyRootFilesystem: true."
-        pattern:
-          spec:
-            containers:
-              - securityContext:
-                  readOnlyRootFilesystem: true
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, has(c.securityContext) &&
+          has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem)
+      message: "[require-readonly-rootfs] Containers must set securityContext.readOnlyRootFilesystem: true."

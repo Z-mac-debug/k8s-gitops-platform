@@ -1,5 +1,7 @@
 # Run with: kyverno test tests/kyverno
-# One compliant pod passes every rule; each other pod breaks exactly one rule.
+# One compliant pod passes every policy; each other pod breaks exactly one.
+# verify-image-signatures (ImageValidatingPolicy) needs registry access and a published signed image,
+# so it is not unit-tested here.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -15,99 +17,88 @@ policies:
 resources:
 - resources.yaml
 results:
-- policy: pod-security-restricted
-  rule: restricted
+- isValidatingPolicy: true
+  policy: disallow-latest-tag
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: disallow-latest-tag
-  rule: require-image-tag
+- isValidatingPolicy: true
+  policy: pod-security-restricted
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: disallow-latest-tag
-  rule: disallow-latest
+- isValidatingPolicy: true
+  policy: require-labels
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: restrict-image-registries
-  rule: approved-registries
+- isValidatingPolicy: true
+  policy: require-probes
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: require-requests-limits
-  rule: validate-resources
+- isValidatingPolicy: true
+  policy: require-readonly-rootfs
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: require-probes
-  rule: validate-probes
+- isValidatingPolicy: true
+  policy: require-requests-limits
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: require-readonly-rootfs
-  rule: validate-readonly-rootfs
+- isValidatingPolicy: true
+  policy: restrict-image-registries
+  kind: Pod
   resources:
   - good-pod
-  kind: Pod
   result: pass
-- policy: require-labels
-  rule: require-app-name
-  resources:
-  - good-pod
+- isValidatingPolicy: true
+  policy: disallow-latest-tag
   kind: Pod
-  result: pass
-- policy: pod-security-restricted
-  rule: restricted
-  resources:
-  - privileged-pod
-  kind: Pod
-  result: fail
-- policy: disallow-latest-tag
-  rule: disallow-latest
   resources:
   - latest-tag-pod
-  kind: Pod
-  result: fail
-- policy: disallow-latest-tag
-  rule: require-image-tag
-  resources:
   - untagged-pod
-  kind: Pod
   result: fail
-- policy: restrict-image-registries
-  rule: approved-registries
+- isValidatingPolicy: true
+  policy: pod-security-restricted
+  kind: Pod
   resources:
-  - untrusted-registry-pod
-  kind: Pod
+  - privileged-pod
   result: fail
-- policy: require-requests-limits
-  rule: validate-resources
-  resources:
-  - no-limits-pod
+- isValidatingPolicy: true
+  policy: require-labels
   kind: Pod
-  result: fail
-- policy: require-probes
-  rule: validate-probes
-  resources:
-  - no-probes-pod
-  kind: Pod
-  result: fail
-- policy: require-readonly-rootfs
-  rule: validate-readonly-rootfs
-  resources:
-  - writable-rootfs-pod
-  kind: Pod
-  result: fail
-- policy: require-labels
-  rule: require-app-name
   resources:
   - no-labels-pod
+  result: fail
+- isValidatingPolicy: true
+  policy: require-probes
   kind: Pod
+  resources:
+  - no-probes-pod
+  result: fail
+- isValidatingPolicy: true
+  policy: require-readonly-rootfs
+  kind: Pod
+  resources:
+  - writable-rootfs-pod
+  result: fail
+- isValidatingPolicy: true
+  policy: require-requests-limits
+  kind: Pod
+  resources:
+  - no-limits-pod
+  result: fail
+- isValidatingPolicy: true
+  policy: restrict-image-registries
+  kind: Pod
+  resources:
+  - untrusted-registry-pod
   result: fail

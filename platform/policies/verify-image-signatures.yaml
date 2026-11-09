@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-image-signatures
   annotations:
@@ -11,36 +11,38 @@ metadata:
       cicd-pipeline release workflow on main. Kyverno also rewrites the tag to the verified digest,
       so what runs is exactly what was signed.
 spec:
-  background: false
-  rules:
-    - name: verify-cosign-keyless
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      verifyImages:
-        - imageReferences:
-            - "ghcr.io/z-mac-debug/*"
-          type: SigstoreBundle
-          failureAction: Enforce
-          mutateDigest: true
-          verifyDigest: true
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    subject: "https://github.com/Z-mac-debug/secure-cicd-pipeline/.github/workflows/pipeline.yml@refs/heads/main"
-                    issuer: "https://token.actions.githubusercontent.com"
-                    rekor:
-                      url: https://rekor.sigstore.dev
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 30
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  matchImageReferences:
+    - glob: ghcr.io/z-mac-debug/*
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: pipeline
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subject: https://github.com/Z-mac-debug/secure-cicd-pipeline/.github/workflows/pipeline.yml@refs/heads/main
+        ctlog:
+          url: https://rekor.sigstore.dev
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.pipeline])).all(e, e > 0)
+      message: "[verify-image-signatures] Images from ghcr.io/z-mac-debug must be signed by the secure-cicd-pipeline release workflow."

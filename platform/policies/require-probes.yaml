@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-probes
   annotations:
@@ -7,34 +7,24 @@ metadata:
     policies.kyverno.io/category: Reliability
     policies.kyverno.io/severity: medium
     policies.kyverno.io/description: >-
-      Containers must define liveness and readiness probes so Kubernetes can restart hung pods and
-      keep traffic away from pods that aren't ready.
+      Containers must define liveness and readiness probes, so Kubernetes restarts hung pods and
+      keeps traffic away from pods that aren't ready.
 spec:
-  background: true
-  rules:
-    - name: validate-probes
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "Liveness and readiness probes are required."
-        pattern:
-          spec:
-            containers:
-              - livenessProbe:
-                  periodSeconds: ">0"
-                readinessProbe:
-                  periodSeconds: ">0"
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, has(c.livenessProbe) && has(c.readinessProbe))
+      message: "[require-probes] Liveness and readiness probes are required."

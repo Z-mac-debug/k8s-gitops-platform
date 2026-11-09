@@ -22,7 +22,7 @@ flowchart LR
         ARGO["Argo CD<br/>root app (app of apps)"]
         subgraph PLATFORM["project: platform"]
             KYV["Kyverno<br/>(wave -2)"]
-            POL["ClusterPolicies<br/>(wave -1)"]
+            POL["CEL ValidatingPolicies<br/>(wave -1)"]
             MON["kube-prometheus-stack"]
         end
         subgraph APPS["project: apps"]
@@ -38,7 +38,7 @@ flowchart LR
 
 | Layer | Control |
 |---|---|
-| **Admission (Kyverno, Enforce)** | Pod Security Standards *restricted*: non-root, no privilege escalation, all capabilities dropped, RuntimeDefault seccomp, no host namespaces |
+| **Admission (Kyverno CEL policies, Deny)** | Pod Security Standards *restricted*: non-root, no privilege escalation, all capabilities dropped, RuntimeDefault seccomp, no host namespaces |
 | | CPU/memory requests and a memory limit on every container |
 | | Explicit image tag or digest; `:latest` rejected |
 | | Images only from approved registries (`ghcr.io/z-mac-debug/*`, `ghcr.io/stefanprodan/*`) |
@@ -51,6 +51,12 @@ flowchart LR
 | **Workload** | Non-root UID 10001, read-only root FS, no service-account token, HPA, PodDisruptionBudget, zero-downtime rolling updates, topology spread |
 | **GitOps (Argo CD)** | `apps` project: one source repo, `podinfo-*` namespaces only, an explicit allow-list of namespaced kinds, no RBAC or webhooks. Automated sync with prune and self-heal reverts manual changes |
 
+The policies are written in **CEL** on Kyverno's GA `policies.kyverno.io/v1` API
+(`ValidatingPolicy` and `ImageValidatingPolicy`). That's the same expression
+language as Kubernetes' native ValidatingAdmissionPolicy, and the successor to
+the now-deprecated `ClusterPolicy`. Autogen applies every Pod rule to
+Deployments, StatefulSets, Jobs and other controllers automatically.
+
 The policies and the image-signing pipeline connect into one supply-chain
 story: **secure-cicd-pipeline** builds, scans and signs the image, and this
 platform refuses to run it unless that signature verifies.
@@ -61,7 +67,7 @@ platform refuses to run it unless that signature verifies.
 bootstrap/          # one-time: pinned Argo CD v3.6.1 + root app
 projects/           # AppProjects: platform (cluster-wide) and apps (locked down)
 clusters/dev|prod/  # app of apps: what runs on each cluster
-platform/policies/  # Kyverno ClusterPolicies
+platform/policies/  # Kyverno ValidatingPolicy + ImageValidatingPolicy (CEL, policies.kyverno.io/v1)
 apps/podinfo/       # base + dev/prod overlays (Kustomize)
 tests/kyverno/      # policy unit tests: a compliant pod plus one pod per violation
 tests/e2e/          # a pod that must be rejected on a live cluster
@@ -73,9 +79,9 @@ tests/e2e/          # a pod that must be rejected on a live cluster
 |---|---|
 | Gitleaks | no secrets in git history |
 | Lint, render & schema-validate | yamllint passes; every kustomization renders, and the output validates against Kubernetes and CRD schemas (kubeconform, strict) |
-| Kyverno policy unit tests | every rule passes the compliant pod and fails exactly the pod that breaks it |
+| Kyverno policy unit tests | every policy passes the compliant pod and fails exactly the pod that breaks it |
 | Checkov / Trivy | the workload manifests and workflows pass two independent misconfiguration scanners |
-| **End-to-end on kind** | Kyverno installs; the app is admitted, rolls out and answers health checks; a privileged pod from an untrusted registry is **rejected**; switching the Deployment to `:latest` is **rejected** |
+| **End-to-end on kind** | Kyverno installs; the app is admitted, rolls out and answers health checks; a privileged pod is **rejected** by Pod Security Admission *and*, independently, by Kyverno; switching the Deployment to `:latest` is **rejected** |
 
 Actions are pinned to commit SHAs, and Dependabot updates them after a 7-day cooldown.
 

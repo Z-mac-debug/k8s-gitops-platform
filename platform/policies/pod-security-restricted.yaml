@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: pod-security-restricted
   annotations:
@@ -7,30 +7,74 @@ metadata:
     policies.kyverno.io/category: Pod Security
     policies.kyverno.io/severity: high
     policies.kyverno.io/description: >-
-      Enforces the Kubernetes restricted Pod Security Standard: non-root, no privilege escalation,
-      all capabilities dropped, RuntimeDefault seccomp, no host namespaces or hostPath volumes.
-      Complements the PSA namespace labels with policy reports and a cluster-wide default.
+      Enforces the Kubernetes restricted Pod Security Standard in CEL: no host namespaces or
+      hostPath, no privileged containers or privilege escalation, all capabilities dropped, non-
+      root, and a RuntimeDefault or Localhost seccomp profile. Complements the PSA namespace labels
+      with a cluster-wide default and policy reports.
 spec:
-  background: true
-  rules:
-    - name: restricted
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        podSecurity:
-          level: restricted
-          version: latest
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+    - name: podNonRoot
+      expression: >-
+        has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) &&
+        object.spec.securityContext.runAsNonRoot
+    - name: podSeccompOk
+      expression: >-
+        has(object.spec.securityContext) && has(object.spec.securityContext.seccompProfile) &&
+        object.spec.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost']
+  validations:
+    - expression: >-
+        (!has(object.spec.hostNetwork) || !object.spec.hostNetwork) &&
+        (!has(object.spec.hostPID) || !object.spec.hostPID) &&
+        (!has(object.spec.hostIPC) || !object.spec.hostIPC)
+      message: "[pod-security-restricted] Host network, PID and IPC namespaces are not allowed."
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))
+      message: "[pod-security-restricted] hostPath volumes are not allowed."
+    - expression: >-
+        variables.allContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) ||
+          !c.securityContext.privileged)
+      message: "[pod-security-restricted] Privileged containers are not allowed."
+    - expression: >-
+        variables.allContainers.all(c, has(c.securityContext) &&
+          has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation)
+      message: "[pod-security-restricted] Every container must set allowPrivilegeEscalation: false."
+    - expression: >-
+        variables.allContainers.all(c, has(c.securityContext) && has(c.securityContext.capabilities) &&
+          has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop &&
+          (!has(c.securityContext.capabilities.add) ||
+           c.securityContext.capabilities.add.all(a, a == 'NET_BIND_SERVICE')))
+      message: "[pod-security-restricted] Containers must drop ALL capabilities and may add back only NET_BIND_SERVICE."
+    - expression: >-
+        variables.allContainers.all(c,
+          (has(c.securityContext) && has(c.securityContext.runAsNonRoot)) ?
+            c.securityContext.runAsNonRoot : variables.podNonRoot)
+      message: "[pod-security-restricted] Containers must run as non-root (runAsNonRoot: true)."
+    - expression: >-
+        (!has(object.spec.securityContext) || !has(object.spec.securityContext.runAsUser) ||
+          object.spec.securityContext.runAsUser != 0) &&
+        variables.allContainers.all(c, !has(c.securityContext) || !has(c.securityContext.runAsUser) ||
+          c.securityContext.runAsUser != 0)
+      message: "[pod-security-restricted] runAsUser 0 (root) is not allowed."
+    - expression: >-
+        variables.allContainers.all(c,
+          (has(c.securityContext) && has(c.securityContext.seccompProfile)) ?
+            c.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost'] : variables.podSeccompOk)
+      message: "[pod-security-restricted] A RuntimeDefault or Localhost seccomp profile is required."

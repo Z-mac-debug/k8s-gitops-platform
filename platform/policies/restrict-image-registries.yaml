@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-image-registries
   annotations:
@@ -7,32 +7,31 @@ metadata:
     policies.kyverno.io/category: Supply Chain
     policies.kyverno.io/severity: high
     policies.kyverno.io/description: >-
-      Only images from approved registries may run, which blocks typosquatted or unknown public images.
+      Only images from approved registries may run, which blocks typosquatted or unknown public
+      images.
 spec:
-  background: true
-  rules:
-    - name: approved-registries
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - local-path-storage
-                - kyverno
-                - argocd
-                - monitoring
-      validate:
-        failureAction: Enforce
-        message: "Images must come from an approved registry: ghcr.io/z-mac-debug/* or ghcr.io/stefanprodan/*."
-        pattern:
-          spec:
-            =(initContainers):
-              - image: "ghcr.io/z-mac-debug/* | ghcr.io/stefanprodan/*"
-            containers:
-              - image: "ghcr.io/z-mac-debug/* | ghcr.io/stefanprodan/*"
+  validationActions: [Deny]
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Platform namespaces run vendor charts with their own audited security settings.
+  # Pod controllers (Deployments, StatefulSets, Jobs...) are covered automatically by autogen.
+  matchConditions:
+    - name: exclude-platform-namespaces
+      expression: >-
+        !(object.metadata.namespace in ['kube-system', 'kube-public', 'kube-node-lease', 'local-path-storage', 'kyverno', 'argocd', 'monitoring'])
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+    - name: approvedPrefixes
+      expression: "['ghcr.io/z-mac-debug/', 'ghcr.io/stefanprodan/']"
+  validations:
+    - expression: >-
+        variables.allContainers.all(c, variables.approvedPrefixes.exists(p, c.image.startsWith(p)))
+      message: "[restrict-image-registries] Images must come from an approved registry: ghcr.io/z-mac-debug/* or ghcr.io/stefanprodan/*."

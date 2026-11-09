@@ -176,7 +176,14 @@ jobs:
 
       - name: Apply platform policies
         run: |
-          kubectl apply -k platform/policies
+          # Helm's --wait can return before the admission webhook accepts connections,
+          # so wait for every Kyverno controller, then retry until the webhook answers.
+          kubectl -n kyverno wait --for=condition=Available deployment --all --timeout=180s
+          for attempt in $(seq 1 12); do
+            kubectl apply -k platform/policies && break
+            if [ "$attempt" -eq 12 ]; then echo "::error::Kyverno webhook never became reachable"; exit 1; fi
+            echo "Webhook not ready yet (attempt $attempt/12), retrying in 10s..."; sleep 10
+          done
           kubectl wait --for=condition=Ready clusterpolicy --all --timeout=180s
           kubectl get clusterpolicy
 

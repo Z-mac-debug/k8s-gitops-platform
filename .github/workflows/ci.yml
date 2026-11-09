@@ -75,8 +75,9 @@ jobs:
           status=0
           for dir in apps/podinfo/overlays/dev apps/podinfo/overlays/prod platform/policies projects clusters/dev clusters/prod bootstrap; do
             echo "::group::$dir"
-            # Kyverno policies are validated by the Kyverno CLI job instead (newer than the public schema catalog).
-            kubectl kustomize "$dir" | kubeconform -strict -summary -skip ClusterPolicy \
+            # Skipped kinds: Kyverno policies are validated by the Kyverno CLI job (newer than the public schema
+            # catalog); CustomResourceDefinitions come from upstream releases and kubeconform has no strict schema for them.
+            kubectl kustomize "$dir" | kubeconform -strict -summary -skip ClusterPolicy,CustomResourceDefinition \
               -schema-location default \
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
               || status=1

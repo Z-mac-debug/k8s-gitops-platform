@@ -13,6 +13,8 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: podinfo-*
+    - server: https://kubernetes.default.svc
+      namespace: secure-api-*
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

@@ -1,0 +1,81 @@
+# The Flask API built, scanned and cosign-signed by github.com/Z-mac-debug/secure-cicd-pipeline.
+# Kyverno verifies that signature at admission and rewrites the tag to the verified digest.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-api
+  namespace: secure-api
+  labels:
+    app.kubernetes.io/name: secure-api
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Kyverno verify-image-signatures pins this tag to the verified digest at admission
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secure-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secure-api
+    spec:
+      serviceAccountName: secure-api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/z-mac-debug/secure-cicd-pipeline:b6bc5cc6ad8f50f8de5555815641ab8be172f27e
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: APP_VERSION
+              value: "b6bc5cc6ad8f50f8de5555815641ab8be172f27e"
+          # exec probes run inside the pod, so the default-deny NetworkPolicy can't block them
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp # gunicorn worker heartbeat files
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

@@ -26,7 +26,7 @@ flowchart LR
             MON["kube-prometheus-stack"]
         end
         subgraph APPS["project: apps"]
-            POD["podinfo-dev / podinfo-prod<br/>PSA restricted · default-deny netpol"]
+            POD["podinfo + secure-api (dev / prod)<br/>PSA restricted · default-deny netpol"]
         end
     end
     GIT -- "pull, reconcile, self-heal" --> ARGO
@@ -58,8 +58,10 @@ the now-deprecated `ClusterPolicy`. Autogen applies every Pod rule to
 Deployments, StatefulSets, Jobs and other controllers automatically.
 
 The policies and the image-signing pipeline connect into one supply-chain
-story: **secure-cicd-pipeline** builds, scans and signs the image, and this
-platform refuses to run it unless that signature verifies.
+story, and CI proves it on every run. **secure-cicd-pipeline** builds, scans and
+signs the image. This platform verifies that keyless signature at admission,
+rewrites the tag to the signed digest, and refuses anything from the same
+registry that it can't verify.
 
 ## Repository layout
 
@@ -68,9 +70,10 @@ bootstrap/          # one-time: pinned Argo CD v3.6.1 + root app
 projects/           # AppProjects: platform (cluster-wide) and apps (locked down)
 clusters/dev|prod/  # app of apps: what runs on each cluster
 platform/policies/  # Kyverno ValidatingPolicy + ImageValidatingPolicy (CEL, policies.kyverno.io/v1)
-apps/podinfo/       # base + dev/prod overlays (Kustomize)
+apps/podinfo/       # demo app: base + dev/prod overlays (Kustomize)
+apps/secure-api/    # the cosign-signed image from secure-cicd-pipeline
 tests/kyverno/      # policy unit tests: a compliant pod plus one pod per violation
-tests/e2e/          # a pod that must be rejected on a live cluster
+tests/e2e/          # pods that must be rejected on a live cluster
 ```
 
 ## CI pipeline
@@ -81,7 +84,7 @@ tests/e2e/          # a pod that must be rejected on a live cluster
 | Lint, render & schema-validate | yamllint passes; every kustomization renders, and the output validates against Kubernetes and CRD schemas (kubeconform, strict) |
 | Kyverno policy unit tests | every policy passes the compliant pod and fails exactly the pod that breaks it |
 | Checkov / Trivy | the workload manifests and workflows pass two independent misconfiguration scanners |
-| **End-to-end on kind** | Kyverno installs; the app is admitted, rolls out and answers health checks; a privileged pod is **rejected** by Pod Security Admission *and*, independently, by Kyverno; a pod from an untrusted registry is **rejected**; switching the Deployment to `:latest` is **rejected** |
+| **End-to-end on kind** | Kyverno installs; podinfo is admitted and healthy; **the cosign-signed `secure-api` image is verified, pinned to the exact digest the pipeline signed, and serves traffic**; an unsigned artifact from the same registry is **rejected**; a privileged pod is **rejected** by Pod Security Admission *and*, independently, by Kyverno; an untrusted registry and a switch to `:latest` are **rejected** |
 
 Actions are pinned to commit SHAs, and Dependabot updates them after a 7-day cooldown.
 
@@ -111,4 +114,3 @@ read-only repo credential to Argo CD.
 - Argo CD ApplicationSets to generate per-cluster apps
 - External Secrets Operator with AWS Secrets Manager
 - Gateway API ingress with cert-manager TLS
-- Deploy the signed `secure-cicd-pipeline` image as a second app

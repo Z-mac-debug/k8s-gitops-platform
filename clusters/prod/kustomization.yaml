@@ -6,3 +6,4 @@ resources:
   - policies.yaml
   - monitoring.yaml
   - podinfo.yaml
+  - secure-api.yaml

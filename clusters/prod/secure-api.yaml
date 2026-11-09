@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secure-api-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: apps
+  source:
+    repoURL: https://github.com/Z-mac-debug/k8s-gitops-platform.git
+    targetRevision: main
+    path: apps/secure-api/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: secure-api-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

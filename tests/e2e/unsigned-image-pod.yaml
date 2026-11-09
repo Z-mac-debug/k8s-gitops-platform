@@ -1,0 +1,50 @@
+# From the approved registry and otherwise fully compliant, but this reference is the cosign
+# signature artifact itself, which carries no signature of its own. Only verify-image-signatures
+# can reject it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsigned-image-pod
+  namespace: policy-test
+  labels:
+    app.kubernetes.io/name: unsigned-image
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: app
+    image: ghcr.io/z-mac-debug/secure-cicd-pipeline:sha256-7832d7741f579a85f0d27d65b6abfbe5ece0d68a1ed2cbeffd90d70687a9fe35
+    livenessProbe:
+      exec:
+        command:
+        - podcli
+        - check
+        - http
+        - localhost:9898/healthz
+      periodSeconds: 10
+    readinessProbe:
+      exec:
+        command:
+        - podcli
+        - check
+        - http
+        - localhost:9898/readyz
+      periodSeconds: 10
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 128Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      capabilities:
+        drop:
+        - ALL

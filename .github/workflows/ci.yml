@@ -73,7 +73,9 @@ jobs:
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           status=0
-          for dir in apps/podinfo/overlays/dev apps/podinfo/overlays/prod platform/policies projects clusters/dev clusters/prod bootstrap; do
+          dirs="apps/podinfo/overlays/dev apps/podinfo/overlays/prod apps/secure-api/overlays/dev apps/secure-api/overlays/prod"
+          dirs="$dirs platform/policies projects clusters/dev clusters/prod bootstrap"
+          for dir in $dirs; do
             echo "::group::$dir"
             # Skipped kinds: Kyverno CEL policies are validated by the Kyverno CLI job (newer than the public schema
             # catalog); CustomResourceDefinitions come from upstream releases and kubeconform has no strict schema for them.
@@ -186,6 +188,7 @@ jobs:
             echo "Webhook not ready yet (attempt $attempt/12), retrying in 10s..."; sleep 10
           done
           kubectl wait --for=jsonpath='{.status.conditionStatus.ready}'=true validatingpolicy --all --timeout=180s
+          kubectl wait --for=jsonpath='{.status.conditionStatus.ready}'=true imagevalidatingpolicy --all --timeout=180s
           kubectl get validatingpolicies,imagevalidatingpolicies
 
       - name: Wait until the policies are enforcing at admission
@@ -214,6 +217,37 @@ jobs:
           kubectl -n podinfo-dev port-forward svc/podinfo 9898:9898 >/tmp/pf.log 2>&1 &
           for i in $(seq 1 20); do curl -fsS http://localhost:9898/healthz && break; sleep 1; done
           curl -fsS http://localhost:9898/ | head -c 400; echo
+
+      - name: Deploy secure-api (cosign-signed by secure-cicd-pipeline) - must be ADMITTED and digest-pinned
+        env:
+          SIGNED_DIGEST: sha256:7832d7741f579a85f0d27d65b6abfbe5ece0d68a1ed2cbeffd90d70687a9fe35
+        run: |
+          kubectl apply -k apps/secure-api/overlays/dev
+          kubectl -n secure-api-dev rollout status deployment/secure-api --timeout=240s
+          image=$(kubectl -n secure-api-dev get pods -l app.kubernetes.io/name=secure-api \
+                    -o jsonpath='{.items[0].spec.containers[0].image}')
+          echo "Running image: $image"
+          # Kyverno replaced the tag with the digest it verified; it must be exactly what the pipeline signed.
+          case "$image" in
+            *"@$SIGNED_DIGEST") echo "Signature verified and image pinned to the signed digest" ;;
+            *) echo "::error::Expected image pinned to $SIGNED_DIGEST"; exit 1 ;;
+          esac
+
+      - name: secure-api smoke test
+        run: |
+          kubectl -n secure-api-dev port-forward svc/secure-api 8080:8080 >/tmp/pf-api.log 2>&1 &
+          for i in $(seq 1 20); do curl -fsS http://localhost:8080/health && break; sleep 1; done
+          echo
+          curl -fsS "http://localhost:8080/api/greet?name=Kubernetes"; echo
+          curl -fsSI http://localhost:8080/ | grep -i "content-security-policy"
+
+      - name: Unsigned artifact from the approved registry - must be REJECTED by signature verification
+        run: |
+          if kubectl apply -f tests/e2e/unsigned-image-pod.yaml 2>/tmp/err.txt; then
+            echo "::error::An unsigned image from ghcr.io/z-mac-debug was admitted"; exit 1
+          fi
+          cat /tmp/err.txt
+          grep -q "verify-image-signatures" /tmp/err.txt
 
       # Defence in depth: the same bad pod must be stopped by two independent layers.
       - name: Non-compliant pod - must be REJECTED by Pod Security Admission
@@ -256,6 +290,8 @@ jobs:
         run: |
           kubectl get pods -A
           kubectl -n podinfo-dev describe pods || true
+          kubectl -n secure-api-dev describe pods || true
+          kubectl -n kyverno logs deploy/kyverno-admission-controller --tail=80 || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -50
           kubectl get validatingpolicies,imagevalidatingpolicies -o wide || true
           kubectl get policyreport -A || true

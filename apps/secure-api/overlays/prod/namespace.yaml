@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-api-prod
+  labels:
+    # Pod Security Admission: the API server itself rejects anything below "restricted"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute
+  namespace: secure-api-prod
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 8Gi
+    limits.cpu: "16"
+    limits.memory: 16Gi
+    pods: "20"
+    services.loadbalancers: "0"
+    services.nodeports: "0"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: secure-api-prod
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 256Mi
+      max:
+        cpu: "2"
+        memory: 1Gi

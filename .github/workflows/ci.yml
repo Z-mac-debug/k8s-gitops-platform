@@ -232,6 +232,15 @@ jobs:
           fi
           cat /tmp/err.txt
           grep -q "pod-security-restricted" /tmp/err.txt
+
+      - name: Pod from an untrusted registry - must be REJECTED by Kyverno
+        run: |
+          # Each CEL policy has its own webhook and the API server stops at the first denial,
+          # so this pod is compliant in every way except its registry.
+          if kubectl apply -f tests/e2e/untrusted-registry-pod.yaml 2>/tmp/err.txt; then
+            echo "::error::Pod from an unapproved registry was admitted"; exit 1
+          fi
+          cat /tmp/err.txt
           grep -q "restrict-image-registries" /tmp/err.txt
 
       - name: Switching to ':latest' - must be REJECTED

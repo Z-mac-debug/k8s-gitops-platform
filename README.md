@@ -81,7 +81,7 @@ tests/e2e/          # a pod that must be rejected on a live cluster
 | Lint, render & schema-validate | yamllint passes; every kustomization renders, and the output validates against Kubernetes and CRD schemas (kubeconform, strict) |
 | Kyverno policy unit tests | every policy passes the compliant pod and fails exactly the pod that breaks it |
 | Checkov / Trivy | the workload manifests and workflows pass two independent misconfiguration scanners |
-| **End-to-end on kind** | Kyverno installs; the app is admitted, rolls out and answers health checks; a privileged pod is **rejected** by Pod Security Admission *and*, independently, by Kyverno; switching the Deployment to `:latest` is **rejected** |
+| **End-to-end on kind** | Kyverno installs; the app is admitted, rolls out and answers health checks; a privileged pod is **rejected** by Pod Security Admission *and*, independently, by Kyverno; a pod from an untrusted registry is **rejected**; switching the Deployment to `:latest` is **rejected** |
 
 Actions are pinned to commit SHAs, and Dependabot updates them after a 7-day cooldown.
 

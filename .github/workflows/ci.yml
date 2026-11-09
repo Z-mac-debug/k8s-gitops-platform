@@ -199,9 +199,20 @@ jobs:
           for i in $(seq 1 20); do curl -fsS http://localhost:9898/healthz && break; sleep 1; done
           curl -fsS http://localhost:9898/ | head -c 400; echo
 
-      - name: Non-compliant pod - must be REJECTED
+      # Defence in depth: the same bad pod must be stopped by two independent layers.
+      - name: Non-compliant pod - must be REJECTED by Pod Security Admission
         run: |
           if kubectl apply -f tests/e2e/noncompliant-pod.yaml 2>/tmp/err.txt; then
+            echo "::error::Privileged pod was admitted in a PSA-restricted namespace"; exit 1
+          fi
+          cat /tmp/err.txt
+          grep -q 'violates PodSecurity "restricted' /tmp/err.txt
+
+      - name: Non-compliant pod - must be REJECTED by Kyverno (namespace without PSA labels)
+        run: |
+          kubectl create namespace policy-test
+          if sed 's/namespace: podinfo-dev/namespace: policy-test/' tests/e2e/noncompliant-pod.yaml \
+               | kubectl apply -f - 2>/tmp/err.txt; then
             echo "::error::Privileged pod from an unapproved registry was admitted"; exit 1
           fi
           cat /tmp/err.txt

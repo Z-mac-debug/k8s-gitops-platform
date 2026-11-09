@@ -1,0 +1,26 @@
+# Platform team: cluster-wide components. Allowed to create cluster-scoped
+# resources (CRDs, webhooks, ClusterPolicies), but only from approved sources
+# and only into platform namespaces.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Cluster-wide platform components (Kyverno, policies, monitoring)
+  sourceRepos:
+    - https://github.com/Z-mac-debug/k8s-gitops-platform.git
+    - https://kyverno.github.io/kyverno/
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: kube-system # kube-prometheus-stack adds Services here for control-plane scraping
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true

@@ -1,0 +1,4 @@
+*.kubeconfig
+kubeconfig
+.DS_Store
+/rendered/

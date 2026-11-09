@@ -1,0 +1,113 @@
+# Run with: kyverno test tests/kyverno
+# One compliant pod passes every rule; each other pod breaks exactly one rule.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: platform-policies
+policies:
+- ../../platform/policies/disallow-latest-tag.yaml
+- ../../platform/policies/pod-security-restricted.yaml
+- ../../platform/policies/require-labels.yaml
+- ../../platform/policies/require-probes.yaml
+- ../../platform/policies/require-readonly-rootfs.yaml
+- ../../platform/policies/require-requests-limits.yaml
+- ../../platform/policies/restrict-image-registries.yaml
+resources:
+- resources.yaml
+results:
+- policy: pod-security-restricted
+  rule: restricted
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: disallow-latest-tag
+  rule: require-image-tag
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: disallow-latest-tag
+  rule: disallow-latest
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: restrict-image-registries
+  rule: approved-registries
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: require-requests-limits
+  rule: validate-resources
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: require-probes
+  rule: validate-probes
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: require-readonly-rootfs
+  rule: validate-readonly-rootfs
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: require-labels
+  rule: require-app-name
+  resources:
+  - good-pod
+  kind: Pod
+  result: pass
+- policy: pod-security-restricted
+  rule: restricted
+  resources:
+  - privileged-pod
+  kind: Pod
+  result: fail
+- policy: disallow-latest-tag
+  rule: disallow-latest
+  resources:
+  - latest-tag-pod
+  kind: Pod
+  result: fail
+- policy: disallow-latest-tag
+  rule: require-image-tag
+  resources:
+  - untagged-pod
+  kind: Pod
+  result: fail
+- policy: restrict-image-registries
+  rule: approved-registries
+  resources:
+  - untrusted-registry-pod
+  kind: Pod
+  result: fail
+- policy: require-requests-limits
+  rule: validate-resources
+  resources:
+  - no-limits-pod
+  kind: Pod
+  result: fail
+- policy: require-probes
+  rule: validate-probes
+  resources:
+  - no-probes-pod
+  kind: Pod
+  result: fail
+- policy: require-readonly-rootfs
+  rule: validate-readonly-rootfs
+  resources:
+  - writable-rootfs-pod
+  kind: Pod
+  result: fail
+- policy: require-labels
+  rule: require-app-name
+  resources:
+  - no-labels-pod
+  kind: Pod
+  result: fail

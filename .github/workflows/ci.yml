@@ -1,0 +1,217 @@
+name: Platform CI
+
+# Static checks on every manifest, unit tests for every Kyverno policy, then an
+# end-to-end test on a real Kubernetes (kind) cluster that proves the policies
+# admit the compliant app and reject a non-compliant one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KYVERNO_CHART_VERSION: "3.9.2"
+  KYVERNO_CLI_VERSION: "v1.19.2"
+  KUBECONFORM_VERSION: "v0.8.0"
+
+jobs:
+  secrets-scan:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  validate:
+    name: Lint, render & schema-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: yamllint
+        run: |
+          pip install yamllint==1.38.0
+          yamllint --strict .
+
+      - name: Install kubeconform
+        run: go install "github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}"
+
+      - name: Render every kustomization and validate against Kubernetes + CRD schemas
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          status=0
+          for dir in apps/podinfo/overlays/dev apps/podinfo/overlays/prod platform/policies projects clusters/dev clusters/prod bootstrap; do
+            echo "::group::$dir"
+            # Kyverno policies are validated by the Kyverno CLI job instead (newer than the public schema catalog).
+            kubectl kustomize "$dir" | kubeconform -strict -summary -skip ClusterPolicy \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+              || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  policy-tests:
+    name: Kyverno policy unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ env.KYVERNO_CLI_VERSION }}
+
+      - name: kyverno test
+        run: kyverno test tests/kyverno --detailed-results
+
+  checkov:
+    name: Policy as code (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Checkov
+        run: pip install checkov==3.4.3
+
+      - name: Checkov (workload manifests and workflows)
+        run: checkov --directory apps --directory .github --framework kubernetes github_actions --compact --quiet
+
+  trivy:
+    name: Misconfiguration (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          skip-dirs: tests # deliberately non-compliant test fixtures
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          version: v0.76.2
+
+  e2e:
+    name: End-to-end on kind
+    needs: [validate, policy-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: gitops-e2e
+          wait: 120s
+
+      - name: Install Kyverno
+        run: |
+          helm repo add kyverno https://kyverno.github.io/kyverno/
+          helm install kyverno kyverno/kyverno --version "$KYVERNO_CHART_VERSION" \
+            --namespace kyverno --create-namespace --wait --timeout 5m
+
+      - name: Apply platform policies
+        run: |
+          kubectl apply -k platform/policies
+          kubectl wait --for=condition=Ready clusterpolicy --all --timeout=180s
+          kubectl get clusterpolicy
+
+      - name: Deploy podinfo (dev overlay) - must be ADMITTED
+        run: |
+          kubectl apply -k apps/podinfo/overlays/dev
+          kubectl -n podinfo-dev rollout status deployment/podinfo --timeout=180s
+          kubectl -n podinfo-dev get pods -o wide
+
+      - name: Smoke test
+        run: |
+          kubectl -n podinfo-dev port-forward svc/podinfo 9898:9898 >/tmp/pf.log 2>&1 &
+          for i in $(seq 1 20); do curl -fsS http://localhost:9898/healthz && break; sleep 1; done
+          curl -fsS http://localhost:9898/ | head -c 400; echo
+
+      - name: Non-compliant pod - must be REJECTED
+        run: |
+          if kubectl apply -f tests/e2e/noncompliant-pod.yaml 2>/tmp/err.txt; then
+            echo "::error::Privileged pod from an unapproved registry was admitted"; exit 1
+          fi
+          cat /tmp/err.txt
+          grep -q "pod-security-restricted" /tmp/err.txt
+          grep -q "restrict-image-registries" /tmp/err.txt
+
+      - name: Switching to ':latest' - must be REJECTED
+        run: |
+          if kubectl -n podinfo-dev set image deployment/podinfo podinfo=ghcr.io/stefanprodan/podinfo:latest 2>/tmp/err.txt; then
+            echo "::error::Deployment update to a ':latest' image was admitted"; exit 1
+          fi
+          cat /tmp/err.txt
+          grep -q "disallow-latest-tag" /tmp/err.txt
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n podinfo-dev describe pods || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50
+          kubectl get policyreport -A || true

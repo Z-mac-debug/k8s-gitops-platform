@@ -1,0 +1,36 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: pod-security-restricted
+  annotations:
+    policies.kyverno.io/title: Pod Security Standards (restricted)
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Enforces the Kubernetes restricted Pod Security Standard: non-root, no privilege escalation,
+      all capabilities dropped, RuntimeDefault seccomp, no host namespaces or hostPath volumes.
+      Complements the PSA namespace labels with policy reports and a cluster-wide default.
+spec:
+  background: true
+  rules:
+    - name: restricted
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - local-path-storage
+                - kyverno
+                - argocd
+                - monitoring
+      validate:
+        failureAction: Enforce
+        podSecurity:
+          level: restricted
+          version: latest

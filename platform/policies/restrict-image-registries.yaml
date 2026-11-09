@@ -1,0 +1,38 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict image registries
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Only images from approved registries may run, which blocks typosquatted or unknown public images.
+spec:
+  background: true
+  rules:
+    - name: approved-registries
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - local-path-storage
+                - kyverno
+                - argocd
+                - monitoring
+      validate:
+        failureAction: Enforce
+        message: "Images must come from an approved registry: ghcr.io/z-mac-debug/* or ghcr.io/stefanprodan/*."
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "ghcr.io/z-mac-debug/* | ghcr.io/stefanprodan/*"
+            containers:
+              - image: "ghcr.io/z-mac-debug/* | ghcr.io/stefanprodan/*"

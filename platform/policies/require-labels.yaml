@@ -1,0 +1,37 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-labels
+  annotations:
+    policies.kyverno.io/title: Require standard labels
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/description: >-
+      Pods must carry app.kubernetes.io/name, which ownership, cost allocation and network policies
+      rely on.
+spec:
+  background: true
+  rules:
+    - name: require-app-name
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - local-path-storage
+                - kyverno
+                - argocd
+                - monitoring
+      validate:
+        failureAction: Enforce
+        message: "The label app.kubernetes.io/name is required."
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"

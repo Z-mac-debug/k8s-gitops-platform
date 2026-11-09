@@ -1,0 +1,9 @@
+# One-time bootstrap:  kubectl apply -k bootstrap --server-side
+# Installs a pinned Argo CD release, then hands control to the root app.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml
+  - root-app.yaml

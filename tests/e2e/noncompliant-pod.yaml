@@ -1,0 +1,45 @@
+# Must be REJECTED at admission: privileged, and from an unapproved registry.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: noncompliant-pod
+  namespace: podinfo-dev
+  labels:
+    app.kubernetes.io/name: podinfo
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: app
+    image: docker.io/library/nginx:1.29
+    livenessProbe:
+      exec:
+        command:
+        - podcli
+        - check
+        - http
+        - localhost:9898/healthz
+      periodSeconds: 10
+    readinessProbe:
+      exec:
+        command:
+        - podcli
+        - check
+        - http
+        - localhost:9898/readyz
+      periodSeconds: 10
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 128Mi
+    securityContext:
+      privileged: true
+      allowPrivilegeEscalation: true
+      readOnlyRootFilesystem: true

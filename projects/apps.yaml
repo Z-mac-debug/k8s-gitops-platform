@@ -1,0 +1,39 @@
+# Application teams: namespaced workloads only, from this repository only.
+# They can't create cluster-scoped objects (other than their Namespace), RBAC or
+# webhooks, so a compromised app definition can't escalate to the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  description: Application workloads
+  sourceRepos:
+    - https://github.com/Z-mac-debug/k8s-gitops-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: podinfo-*
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: apps
+      kind: Deployment
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true

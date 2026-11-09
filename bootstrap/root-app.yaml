@@ -1,0 +1,20 @@
+# App of apps: Argo CD manages its own projects and every other Application
+# from clusters/<env>. After bootstrap, all changes go through git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z-mac-debug/k8s-gitops-platform.git
+    targetRevision: main
+    path: clusters/dev # change to clusters/prod for the production cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
